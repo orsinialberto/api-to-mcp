@@ -48,6 +48,12 @@ func (p *OpenAPIParser) ParseSpec() (*openapi.ParsedSpec, error) {
 	// Convert to our internal representation
 	parsedSpec := p.convertToParsedSpec(doc)
 
+	// Validate the parsed specification
+	validator := NewValidator(p.logger)
+	if err := validator.ValidateSpec(parsedSpec); err != nil {
+		return nil, fmt.Errorf("specification validation failed: %w", err)
+	}
+
 	p.logger.WithFields(logrus.Fields{
 		"title":      parsedSpec.Info.Title,
 		"version":    parsedSpec.Info.Version,

@@ -190,7 +190,7 @@ func (c *HTTPClient) SetAuth(authType, token string) {
 		// TODO: Implement basic auth
 		c.logger.Warn("Basic authentication not implemented")
 	default:
-		c.logger.Warn("Unknown authentication type: %s", authType)
+		c.logger.Warnf("Unknown authentication type: %s", authType)
 	}
 }
 

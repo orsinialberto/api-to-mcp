@@ -77,12 +77,12 @@ Il server genera automaticamente un tool MCP:
 - [x] Creazione entry point principale
 
 ### Fase 2: Parser OpenAPI
-- [ ] Implementazione parser OpenAPI base
-- [ ] Supporto per file JSON e YAML
-- [ ] Estrazione endpoint e metodi HTTP
-- [ ] Parsing parametri e schemi
-- [ ] Validazione struttura OpenAPI
-- [ ] Gestione errori di parsing
+- [x] Implementazione parser OpenAPI base
+- [x] Supporto per file JSON e YAML
+- [x] Estrazione endpoint e metodi HTTP
+- [x] Parsing parametri e schemi
+- [x] Validazione struttura OpenAPI
+- [x] Gestione errori di parsing
 
 ### Fase 3: Generazione Tools MCP
 - [ ] Definizione strutture dati MCP
