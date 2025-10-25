@@ -70,11 +70,11 @@ Il server genera automaticamente un tool MCP:
 ## Piano di Sviluppo
 
 ### Fase 1: Setup e Foundation
-- [ ] Inizializzazione progetto Go con moduli
-- [ ] Setup struttura directory e package
-- [ ] Configurazione dipendenze (go.mod)
-- [ ] Setup logging e configurazione base
-- [ ] Creazione entry point principale
+- [x] Inizializzazione progetto Go con moduli
+- [x] Setup struttura directory e package
+- [x] Configurazione dipendenze (go.mod)
+- [x] Setup logging e configurazione base
+- [x] Creazione entry point principale
 
 ### Fase 2: Parser OpenAPI
 - [ ] Implementazione parser OpenAPI base

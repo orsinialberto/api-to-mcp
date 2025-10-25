@@ -1,0 +1,21 @@
+server:
+  host: localhost
+  port: 8080
+
+openapi:
+  spec_path: ./examples/petstore.yaml
+  base_url: https://petstore3.swagger.io/api/v3
+
+mcp:
+  server_name: api-to-mcp
+  version: 1.0.0
+
+filters:
+  include_paths: []
+  exclude_paths: []
+  include_methods: []
+  exclude_methods: []
+
+logging:
+  level: info
+  format: json
