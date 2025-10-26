@@ -8,13 +8,48 @@ API-to-MCP analyzes OpenAPI schemas and dynamically generates tools that allow i
 
 ## Features
 
-- **OpenAPI Parsing**: Supports OpenAPI 3.0/3.1 and Swagger 2.0 specifications
-- **Automatic Tool Generation**: Converts REST endpoints to MCP tools
-- **JSON-RPC Server**: Exposes tools via JSON-RPC 2.0 protocol
-- **Flexible Configuration**: YAML/JSON configuration with environment variable support
-- **Filtering**: Include/exclude endpoints and HTTP methods
-- **Authentication**: Support for API keys, Bearer tokens, and basic auth
-- **Error Handling**: Comprehensive error handling and logging
+- **OpenAPI Parsing**: Supports OpenAPI 3.0/3.1 and Swagger 2.0 specifications ✅
+- **Automatic Tool Generation**: Converts REST endpoints to MCP tools ✅
+- **JSON-RPC Server**: Exposes tools via JSON-RPC 2.0 protocol 🚧
+- **Flexible Configuration**: YAML/JSON configuration with environment variable support ✅
+- **Filtering**: Include/exclude endpoints and HTTP methods ✅
+- **Authentication**: Support for API keys, Bearer tokens, and basic auth 🚧
+- **Error Handling**: Comprehensive error handling and logging ✅
+
+## Development Status
+
+### ✅ Completed Phases
+
+**Phase 1: Setup and Foundation**
+- Project initialization and basic structure
+- Go module setup and dependencies
+- Logging and configuration system
+
+**Phase 2: OpenAPI Parsing**
+- OpenAPI 3.0/3.1 specification parsing
+- JSON and YAML file support
+- Endpoint and parameter extraction
+- Schema validation and error handling
+
+**Phase 3: MCP Tool Generation**
+- MCP tool structure definition
+- Endpoint to tool mapping
+- Type conversion (OpenAPI → MCP)
+- Request body schema parsing
+- Complex nested schema support
+- Comprehensive validation and error handling
+- Filtering support (paths and methods)
+
+### 🚧 In Progress
+
+**Phase 4: JSON-RPC Server**
+- JSON-RPC 2.0 server implementation
+- Tool registration and method handling
+- Request/response processing
+
+### 📋 Planned
+
+**Phase 5-10**: HTTP client integration, advanced configuration, testing, documentation, optimization, and release preparation.
 
 ## Quick Start
 

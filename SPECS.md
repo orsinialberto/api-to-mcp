@@ -85,12 +85,12 @@ Il server genera automaticamente un tool MCP:
 - [x] Gestione errori di parsing
 
 ### Fase 3: Generazione Tools MCP
-- [ ] Definizione strutture dati MCP
-- [ ] Mapping endpoint → tools MCP
-- [ ] Conversione tipi di dati OpenAPI → MCP
-- [ ] Generazione metadata tools (nome, descrizione)
-- [ ] Gestione parametri richiesti/opzionali
-- [ ] Validazione schema input
+- [x] Definizione strutture dati MCP
+- [x] Mapping endpoint → tools MCP
+- [x] Conversione tipi di dati OpenAPI → MCP
+- [x] Generazione metadata tools (nome, descrizione)
+- [x] Gestione parametri richiesti/opzionali
+- [x] Validazione schema input
 
 ### Fase 4: Server JSON-RPC
 - [ ] Implementazione server JSON-RPC base

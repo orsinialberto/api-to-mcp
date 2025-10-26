@@ -32,7 +32,13 @@ func NewMCPToolGenerator(spec *openapi.ParsedSpec, cfg *config.Config, logger *l
 func (g *MCPToolGenerator) GenerateTools() ([]mcp.Tool, error) {
 	g.logger.Info("Generating MCP tools from OpenAPI specification")
 
+	// Validate input
+	if err := g.validateInput(); err != nil {
+		return nil, fmt.Errorf("input validation failed: %w", err)
+	}
+
 	tools := make([]mcp.Tool, 0)
+	errors := make([]error, 0)
 
 	for _, endpoint := range g.spec.Endpoints {
 		// Apply filters
@@ -47,6 +53,8 @@ func (g *MCPToolGenerator) GenerateTools() ([]mcp.Tool, error) {
 		// Generate tool for this endpoint
 		tool, err := g.generateToolForEndpoint(endpoint)
 		if err != nil {
+			errorMsg := fmt.Errorf("failed to generate tool for endpoint %s %s: %w", endpoint.Method, endpoint.Path, err)
+			errors = append(errors, errorMsg)
 			g.logger.WithError(err).WithFields(logrus.Fields{
 				"path":   endpoint.Path,
 				"method": endpoint.Method,
@@ -54,10 +62,44 @@ func (g *MCPToolGenerator) GenerateTools() ([]mcp.Tool, error) {
 			continue
 		}
 
+		// Validate generated tool
+		if err := g.validateTool(tool); err != nil {
+			errorMsg := fmt.Errorf("generated tool validation failed for %s %s: %w", endpoint.Method, endpoint.Path, err)
+			errors = append(errors, errorMsg)
+			g.logger.WithError(err).WithFields(logrus.Fields{
+				"path":   endpoint.Path,
+				"method": endpoint.Method,
+				"tool":   tool.Name,
+			}).Error("Generated tool failed validation")
+			continue
+		}
+
 		tools = append(tools, *tool)
 	}
 
-	g.logger.WithField("tool_count", len(tools)).Info("Generated MCP tools")
+	// Log summary
+	g.logger.WithFields(logrus.Fields{
+		"tool_count":      len(tools),
+		"error_count":     len(errors),
+		"total_endpoints": len(g.spec.Endpoints),
+	}).Info("Generated MCP tools")
+
+	// If we have errors but some tools were generated, log warnings
+	if len(errors) > 0 {
+		g.logger.WithField("error_count", len(errors)).Warn("Some tools failed to generate")
+		for _, err := range errors {
+			g.logger.WithError(err).Warn("Tool generation error")
+		}
+	}
+
+	// If no tools were generated, return an error
+	if len(tools) == 0 {
+		if len(errors) > 0 {
+			return nil, fmt.Errorf("no tools could be generated: %d errors occurred", len(errors))
+		}
+		return nil, fmt.Errorf("no tools could be generated: all endpoints were filtered out")
+	}
+
 	return tools, nil
 }
 
@@ -160,14 +202,24 @@ func (g *MCPToolGenerator) generateInputSchema(endpoint openapi.Endpoint) (*mcp.
 
 	// Add request body parameters
 	if endpoint.RequestBody != nil {
-		// For now, we'll add a simple "body" parameter
-		// TODO: Parse request body schema properly
-		schema.Properties["body"] = mcp.Property{
-			Type:        "object",
-			Description: endpoint.RequestBody.Description,
-		}
-		if endpoint.RequestBody.Required {
-			schema.Required = append(schema.Required, "body")
+		// Parse request body schema properly
+		bodySchema, err := g.parseRequestBodySchema(endpoint.RequestBody)
+		if err != nil {
+			g.logger.WithError(err).Warn("Failed to parse request body schema, using fallback")
+			// Fallback to simple body parameter
+			schema.Properties["body"] = mcp.Property{
+				Type:        "object",
+				Description: endpoint.RequestBody.Description,
+			}
+		} else {
+			// Merge body schema properties into main schema
+			for key, property := range bodySchema.Properties {
+				schema.Properties[key] = property
+			}
+			// Add body schema required fields
+			for _, required := range bodySchema.Required {
+				schema.Required = append(schema.Required, required)
+			}
 		}
 	}
 
@@ -318,4 +370,367 @@ func (g *MCPToolGenerator) shouldIncludeEndpoint(endpoint openapi.Endpoint) bool
 	}
 
 	return true
+}
+
+// parseRequestBodySchema parses the request body schema and converts it to MCP input schema
+func (g *MCPToolGenerator) parseRequestBodySchema(requestBody *openapi.RequestBody) (*mcp.InputSchema, error) {
+	if requestBody == nil {
+		return nil, fmt.Errorf("request body is nil")
+	}
+
+	// Look for JSON content type
+	jsonContent, exists := requestBody.Content["application/json"]
+	if !exists {
+		// Fallback to any content type
+		for contentType, content := range requestBody.Content {
+			if contentType == "application/json" || contentType == "application/*" || contentType == "*/*" {
+				jsonContent = content
+				exists = true
+				break
+			}
+		}
+	}
+
+	if !exists {
+		return nil, fmt.Errorf("no supported content type found in request body")
+	}
+
+	// Convert the schema to MCP input schema
+	return g.convertSchemaToInputSchema(jsonContent.Schema)
+}
+
+// convertSchemaToInputSchema converts an OpenAPI schema to MCP input schema
+func (g *MCPToolGenerator) convertSchemaToInputSchema(schema openapi.Schema) (*mcp.InputSchema, error) {
+	inputSchema := &mcp.InputSchema{
+		Type:       "object",
+		Properties: make(map[string]mcp.Property),
+		Required:   make([]string, 0),
+	}
+
+	// Handle object type
+	if schema.Type == "object" {
+		// Add properties
+		for name, propSchema := range schema.Properties {
+			property, err := g.convertSchemaToProperty(propSchema)
+			if err != nil {
+				g.logger.WithError(err).WithField("property", name).Warn("Failed to convert property schema")
+				continue
+			}
+			inputSchema.Properties[name] = property
+		}
+
+		// Add required fields
+		inputSchema.Required = append(inputSchema.Required, schema.Required...)
+	} else {
+		// Handle non-object types (array, primitive)
+		property, err := g.convertSchemaToProperty(schema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert schema to property: %w", err)
+		}
+		inputSchema.Properties["value"] = property
+		if schema.Required != nil && len(schema.Required) > 0 {
+			inputSchema.Required = append(inputSchema.Required, "value")
+		}
+	}
+
+	return inputSchema, nil
+}
+
+// convertSchemaToProperty converts an OpenAPI schema to MCP property
+func (g *MCPToolGenerator) convertSchemaToProperty(schema openapi.Schema) (mcp.Property, error) {
+	property := mcp.Property{
+		Type:        g.mapOpenAPITypeToMCPType(schema.Type),
+		Description: schema.Description,
+		Format:      schema.Format,
+		Default:     schema.Default,
+	}
+
+	// Add constraints
+	if schema.Minimum != nil {
+		property.Minimum = schema.Minimum
+	}
+	if schema.Maximum != nil {
+		property.Maximum = schema.Maximum
+	}
+	if schema.MinLength != nil {
+		property.MinLength = schema.MinLength
+	}
+	if schema.MaxLength != nil {
+		property.MaxLength = schema.MaxLength
+	}
+	if schema.Pattern != "" {
+		property.Pattern = schema.Pattern
+	}
+
+	// Add enum
+	if len(schema.Enum) > 0 {
+		enum := make([]string, len(schema.Enum))
+		for i, v := range schema.Enum {
+			enum[i] = fmt.Sprintf("%v", v)
+		}
+		property.Enum = enum
+	}
+
+	// Handle array items
+	if schema.Type == "array" && schema.Items != nil {
+		itemsProperty, err := g.convertSchemaToProperty(*schema.Items)
+		if err != nil {
+			return property, fmt.Errorf("failed to convert array items: %w", err)
+		}
+		// For arrays, we'll store the items schema in a custom field
+		// This is a simplified approach - in a full implementation,
+		// you might want to handle nested schemas more comprehensively
+		property.Description = fmt.Sprintf("%s (array of %s)", property.Description, itemsProperty.Type)
+	}
+
+	// Handle object properties for nested objects
+	if schema.Type == "object" && len(schema.Properties) > 0 {
+		// For nested objects, we'll create a simplified representation
+		// In a full implementation, you might want to flatten or handle nested objects differently
+		property.Description = fmt.Sprintf("%s (object with %d properties)", property.Description, len(schema.Properties))
+
+		// Add a note about the object structure
+		propertyNames := make([]string, 0, len(schema.Properties))
+		for name := range schema.Properties {
+			propertyNames = append(propertyNames, name)
+		}
+		if len(propertyNames) > 0 {
+			property.Description = fmt.Sprintf("%s - properties: %s", property.Description, strings.Join(propertyNames, ", "))
+		}
+	}
+
+	return property, nil
+}
+
+// convertSchemaToInputSchemaWithReferences converts an OpenAPI schema to MCP input schema with reference support
+func (g *MCPToolGenerator) convertSchemaToInputSchemaWithReferences(schema openapi.Schema) (*mcp.InputSchema, error) {
+	inputSchema := &mcp.InputSchema{
+		Type:       "object",
+		Properties: make(map[string]mcp.Property),
+		Required:   make([]string, 0),
+	}
+
+	// Handle object type
+	if schema.Type == "object" {
+		// Add properties
+		for name, propSchema := range schema.Properties {
+			property, err := g.convertSchemaToPropertyWithReferences(propSchema)
+			if err != nil {
+				g.logger.WithError(err).WithField("property", name).Warn("Failed to convert property schema")
+				continue
+			}
+			inputSchema.Properties[name] = property
+		}
+
+		// Add required fields
+		inputSchema.Required = append(inputSchema.Required, schema.Required...)
+	} else {
+		// Handle non-object types (array, primitive)
+		property, err := g.convertSchemaToPropertyWithReferences(schema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert schema to property: %w", err)
+		}
+		inputSchema.Properties["value"] = property
+		if schema.Required != nil && len(schema.Required) > 0 {
+			inputSchema.Required = append(inputSchema.Required, "value")
+		}
+	}
+
+	return inputSchema, nil
+}
+
+// convertSchemaToPropertyWithReferences converts an OpenAPI schema to MCP property with reference support
+func (g *MCPToolGenerator) convertSchemaToPropertyWithReferences(schema openapi.Schema) (mcp.Property, error) {
+	property := mcp.Property{
+		Type:        g.mapOpenAPITypeToMCPType(schema.Type),
+		Description: schema.Description,
+		Format:      schema.Format,
+		Default:     schema.Default,
+	}
+
+	// Add constraints
+	if schema.Minimum != nil {
+		property.Minimum = schema.Minimum
+	}
+	if schema.Maximum != nil {
+		property.Maximum = schema.Maximum
+	}
+	if schema.MinLength != nil {
+		property.MinLength = schema.MinLength
+	}
+	if schema.MaxLength != nil {
+		property.MaxLength = schema.MaxLength
+	}
+	if schema.Pattern != "" {
+		property.Pattern = schema.Pattern
+	}
+
+	// Add enum
+	if len(schema.Enum) > 0 {
+		enum := make([]string, len(schema.Enum))
+		for i, v := range schema.Enum {
+			enum[i] = fmt.Sprintf("%v", v)
+		}
+		property.Enum = enum
+	}
+
+	// Handle array items
+	if schema.Type == "array" && schema.Items != nil {
+		itemsProperty, err := g.convertSchemaToPropertyWithReferences(*schema.Items)
+		if err != nil {
+			return property, fmt.Errorf("failed to convert array items: %w", err)
+		}
+		property.Description = fmt.Sprintf("%s (array of %s)", property.Description, itemsProperty.Type)
+	}
+
+	// Handle object properties for nested objects
+	if schema.Type == "object" && len(schema.Properties) > 0 {
+		property.Description = fmt.Sprintf("%s (object with %d properties)", property.Description, len(schema.Properties))
+
+		// Add a note about the object structure
+		propertyNames := make([]string, 0, len(schema.Properties))
+		for name := range schema.Properties {
+			propertyNames = append(propertyNames, name)
+		}
+		if len(propertyNames) > 0 {
+			property.Description = fmt.Sprintf("%s - properties: %s", property.Description, strings.Join(propertyNames, ", "))
+		}
+	}
+
+	return property, nil
+}
+
+// resolveSchemaReference resolves a schema reference if it exists in the components
+func (g *MCPToolGenerator) resolveSchemaReference(schema openapi.Schema) (openapi.Schema, error) {
+	// This is a placeholder for schema reference resolution
+	// In a full implementation, you would resolve $ref references to components
+	// For now, we'll return the schema as-is
+	return schema, nil
+}
+
+// validateInput validates the input to the generator
+func (g *MCPToolGenerator) validateInput() error {
+	if g.spec == nil {
+		return fmt.Errorf("specification is nil")
+	}
+
+	if g.config == nil {
+		return fmt.Errorf("configuration is nil")
+	}
+
+	if g.logger == nil {
+		return fmt.Errorf("logger is nil")
+	}
+
+	if len(g.spec.Endpoints) == 0 {
+		return fmt.Errorf("no endpoints found in specification")
+	}
+
+	// Validate configuration
+	if g.config.OpenAPI.BaseURL == "" {
+		return fmt.Errorf("base URL is required")
+	}
+
+	return nil
+}
+
+// validateTool validates a generated tool
+func (g *MCPToolGenerator) validateTool(tool *mcp.Tool) error {
+	if tool == nil {
+		return fmt.Errorf("tool is nil")
+	}
+
+	if tool.Name == "" {
+		return fmt.Errorf("tool name is empty")
+	}
+
+	if tool.Description == "" {
+		return fmt.Errorf("tool description is empty")
+	}
+
+	if tool.InputSchema == nil {
+		return fmt.Errorf("tool input schema is nil")
+	}
+
+	if tool.Handler == nil {
+		return fmt.Errorf("tool handler is nil")
+	}
+
+	// Validate input schema
+	if err := g.validateInputSchema(tool.InputSchema); err != nil {
+		return fmt.Errorf("input schema validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// validateInputSchema validates an input schema
+func (g *MCPToolGenerator) validateInputSchema(schema *mcp.InputSchema) error {
+	if schema == nil {
+		return fmt.Errorf("schema is nil")
+	}
+
+	if schema.Type == "" {
+		return fmt.Errorf("schema type is empty")
+	}
+
+	if schema.Type != "object" {
+		return fmt.Errorf("unsupported schema type: %s", schema.Type)
+	}
+
+	// Validate properties
+	for name, property := range schema.Properties {
+		if name == "" {
+			return fmt.Errorf("property name is empty")
+		}
+
+		if err := g.validateProperty(property); err != nil {
+			return fmt.Errorf("property '%s' validation failed: %w", name, err)
+		}
+	}
+
+	// Validate required fields
+	for _, required := range schema.Required {
+		if required == "" {
+			return fmt.Errorf("required field name is empty")
+		}
+
+		if _, exists := schema.Properties[required]; !exists {
+			return fmt.Errorf("required field '%s' not found in properties", required)
+		}
+	}
+
+	return nil
+}
+
+// validateProperty validates a property
+func (g *MCPToolGenerator) validateProperty(property mcp.Property) error {
+	if property.Type == "" {
+		return fmt.Errorf("property type is empty")
+	}
+
+	// Validate type-specific constraints
+	switch property.Type {
+	case "string":
+		if property.MinLength != nil && property.MaxLength != nil {
+			if *property.MinLength > *property.MaxLength {
+				return fmt.Errorf("minLength (%d) cannot be greater than maxLength (%d)", *property.MinLength, *property.MaxLength)
+			}
+		}
+	case "integer", "number":
+		if property.Minimum != nil && property.Maximum != nil {
+			if *property.Minimum > *property.Maximum {
+				return fmt.Errorf("minimum (%f) cannot be greater than maximum (%f)", *property.Minimum, *property.Maximum)
+			}
+		}
+	}
+
+	// Validate enum values
+	if len(property.Enum) > 0 {
+		if property.Type != "string" {
+			return fmt.Errorf("enum can only be used with string type, got %s", property.Type)
+		}
+	}
+
+	return nil
 }
